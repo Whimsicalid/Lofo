@@ -129,13 +129,129 @@ npm start              # 启动 server（若存在 web/dist 则一并托管 SPA�
 
 **安全提醒：** `.env` 已在 `.gitignore` 中忽略。请勿把真实 Client Secret、会话密钥、NapCat Token 写入任何会公开的文件。
 
-### Campux OAuth 应用
+### Campux 绑定与登录配置（详细）
 
-1. 用校园墙管理员登录 Campux Web 后台，切换到目标校园墙。
-2. 启用 OAuth 服务，创建应用。
-3. **回调地址**填：`https://你的域名/api/auth/callback`（与 `.env` 中 `CAMPUX_REDIRECT_URI` 一致；本地开发可先用 `http://localhost:3000/api/auth/callback`）。
-4. **Scope** 至少包含 `profile`（用户信息）。若你的校园墙不支持 `tenant`，代码当前仅请求 `profile`。
-5. 保存后复制 Client ID / Client Secret 写入 `.env`，重启后端。
+本项目登录**完全依赖 Campux OAuth2**，没有账号密码本地登录。你需要在 Campux 侧创建应用，再在 Lofo 的 `server/.env` 里填对应参数。
+
+#### 1. 先想清楚你要用的对外地址
+
+| 场景 | 用户浏览器地址 | 回调地址 `CAMPUX_REDIRECT_URI` | 登录成功后跳回 `FRONTEND_URL` |
+|------|----------------|--------------------------------|-------------------------------|
+| 本地开发 | `http://localhost:5173` | `http://localhost:3000/api/auth/callback` | `http://localhost:5173` |
+| 生产（单进程托管） | `https://你的域名` | `https://你的域名/api/auth/callback` | `https://你的域名` |
+| 生产（后端非 80/443） | 仍用对外域名/端口 | 仍是 `https://对外域名/api/auth/callback` | 仍是 `https://对外域名` |
+
+要点：
+
+- 回调地址是 **Lofo 后端** 的路径，不是 Campux 的地址。
+- 生产一般由 Nginx / OpenResty 把 80/443 反代到后端（例如 3000/3011），**对 Campux 只暴露对外域名**，不要写 `https://域名:后端端口` 除非你真用那个端口对外。
+- 回调必须以 `/api/auth/callback` 结尾（对应代码路由 `GET /api/auth/callback`）。
+
+#### 2. 在 Campux 后台创建 OAuth 应用（回调在这里填）
+
+Campux 官方说明：<https://docs.campux.top/reference/oauth>
+
+1. 打开你的 Campux 站点（例如 `https://zhs.campux.top`），用**校园墙管理员**登录。
+2. 进入 **OAuth 应用管理**（通常在运营/管理相关菜单下）。
+3. 若提示 OAuth 服务未启用，先 **启用 OAuth 服务**。
+4. **新建应用**，按下列字段填写：
+
+| 字段 | 填什么 | 示例 |
+|------|--------|------|
+| 应用名称 | 任意 | `Lofo 校园寻物` |
+| 应用描述 | 可选 | `校园失物招领登录` |
+| **回调地址 / redirectUris** | Lofo 的回调（必须与 `.env` 完全一致） | `https://lofo.example.com/api/auth/callback` |
+| **Scope** | 至少 `profile` | `profile` |
+| PKCE | 推荐 / 默认 S256 | `S256`（Lofo 已按 S256 实现） |
+
+5. 保存后立刻复制 **Client ID**、**Client Secret**（Secret 往往只显示一次）。
+6. 若你的校园墙后台提供多个回调输入，**必须包含**上面那条完整回调 URL。
+
+#### 3. 在 Lofo 侧配置（只改 `server/.env`，不要写进 Git）
+
+编辑 `server/.env`：
+
+```env
+# 监听端口（生产反代时对内即可）
+PORT=3000
+
+# 会话密钥：足够长的随机字符串
+SESSION_SECRET=请替换成随机长字符串
+
+# Campux 站点根地址（不要带路径，不要末尾斜杠）
+CAMPUX_BASE_URL=https://campux.example.com
+
+# 上一步从 Campux 复制的应用凭据
+CAMPUX_CLIENT_ID=your-client-id
+CAMPUX_CLIENT_SECRET=your-client-secret
+
+# 回调：必须与 Campux 后台 redirectUris 逐字符一致
+CAMPUX_REDIRECT_URI=https://your-domain.example/api/auth/callback
+
+# 登录成功后跳回的站点根地址（前端页面）
+FRONTEND_URL=https://your-domain.example
+
+# 上传目录
+UPLOAD_DIR=./uploads
+
+# 全站 HTTPS 时再开；纯 HTTP 保持不开启
+# COOKIE_SECURE=true
+```
+
+本地最小可跑示例（未配真实 Client 时登录会失败，页面仍可浏览）：
+
+```env
+PORT=3000
+SESSION_SECRET=dev-secret-change-me
+CAMPUX_BASE_URL=https://campux.example.com
+CAMPUX_CLIENT_ID=dev-client-id
+CAMPUX_CLIENT_SECRET=dev-client-secret
+CAMPUX_REDIRECT_URI=http://localhost:3000/api/auth/callback
+FRONTEND_URL=http://localhost:5173
+UPLOAD_DIR=./uploads
+```
+
+改完 `.env` 后重启后端：
+
+```bash
+# 开发
+npm run dev:server
+
+# PM2 生产
+pm2 restart lofo
+```
+
+#### 4. 登录入口与完整流程（代码里怎么用）
+
+| 步骤 | 地址 / 行为 | 谁实现 |
+|------|-------------|--------|
+| 用户点「Campux 登录」 | 打开 `GET /api/auth/login` | 前端 `window.location.href = '/api/auth/login'` |
+| 后端生成 `state` + PKCE | 重定向到 Campux 授权页 | `server/src/oauth.js` → `getAuthorizationUrl` |
+| Campux 授权页 | 用户登录校园墙并同意 | Campux |
+| 授权完成 | Campux 跳回 `CAMPUX_REDIRECT_URI` | `GET /api/auth/callback` |
+| 后端换 Token、拉 userinfo | 创建/更新用户，写入 Session | `server/src/routes/auth.js` |
+| 成功 | 302 到 `FRONTEND_URL` | 回调里 `res.redirect(config.frontendUrl)` |
+| 前端拿当前用户 | `GET /api/auth/me` | 首个用户自动成为 `admin` |
+
+授权时使用的 `scope` 当前为 **`profile`**（见 `server/src/oauth.js`）。无需 `tenant`。
+
+#### 5. 常见绑定失败对照
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| `redirect_uri 未在应用中注册` | Campux 后台没登记该回调，或域名/协议不一致 | 核对 Campux 应用与 `.env` 中 URI 完全一致 |
+| `redirect_uri mismatch` | 授权时用的 URI ≠ 换 Token 时的 URI | 只改一处会失败；两边都用同一字符串 |
+| `invalid_client` | Client ID / Secret 错误或不属于该校园墙 | 重新复制密钥，确认应用未禁用 |
+| `PKCE code_challenge 是必需的` | 极少数 Campux 配置要求 PKCE | Lofo 已实现 S256，一般无需改代码 |
+| 登录成功后仍像未登录 | Session Cookie 未种上（常见于 HTTPS 反代） | 反代传递 `X-Forwarded-Proto`；HTTPS 下设 `COOKIE_SECURE=true` |
+| `state` 无效 / CSRF | 多实例或未信任代理导致 Session 不一致 | 确认 `app.set('trust proxy', 1)`（代码已有）；不要多进程共用错误 cookie 域 |
+
+#### 6. 安全清单
+
+- Client Secret、`SESSION_SECRET` 只放服务器 `.env`，**禁止**提交到 GitHub。
+- `.env` 已被 `.gitignore` 忽略；仓库内只有 `.env.example` 占位模板。
+- 回调地址不要用通配域名；只登记可信域名。
+- 生产优先 HTTPS。
 
 官方文档：<https://docs.campux.top/reference/oauth>
 
