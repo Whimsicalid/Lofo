@@ -1,0 +1,33 @@
+# 开发依赖与构建产物
+node_modules/
+dist/
+web/dist/
+server/data/
+server/uploads/
+uploads/
+data/
+
+# 环境变量与密钥（切勿提交）
+.env
+.env.*
+!.env.example
+
+# 数据库文件
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 打包与备份
+*.tar.gz
+*.zip
+backups/
+backup/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+.pm2/
