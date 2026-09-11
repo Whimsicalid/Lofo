@@ -59,9 +59,13 @@ export default function Header() {
           <div className="flex items-center justify-between h-16 gap-3">
             {/* Logo */}
             <Link to="/" className="flex items-center gap-2.5 group shrink-0">
-              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-coral to-[#F09A4B] text-white flex items-center justify-center font-display text-lg font-semibold shadow-soft group-hover:scale-105 transition-transform duration-300">
-                L
-              </span>
+              <img
+                src="/logo.png"
+                alt=""
+                width={36}
+                height={36}
+                className="w-9 h-9 rounded-xl object-cover shadow-soft group-hover:scale-105 transition-transform duration-300"
+              />
               <span className="font-display text-[1.35rem] font-semibold text-ink tracking-tight truncate">
                 {settings.site_name || 'Lofo 寻物'}
               </span>
